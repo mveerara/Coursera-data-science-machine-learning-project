@@ -1,0 +1,156 @@
+---
+title: "Practical Machine learning course Project"
+author: "Mukund"
+date: "12 January 2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## I. Overview
+ The main goal of the project is to predict the manner in which 6 participants performed some exercise as described below. This is the "classe" variable in the training set. The machine learning algorithm described here is applied to the 20 test cases available in the test data and the predictions are submitted in appropriate format. 
+ 
+ ## 2. Background 
+ Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## 3. Data Loading and Exploratory Analysis
+### 3A. Loading Data and treating different missing values
+
+```{r}
+## Loading and preprocessing the data. Treat "#DIV/0!",blank, string "NA"as missing values.
+HARdatatrain <- read.csv("pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+HARdatatest <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+
+### 3B.Loading different Librarirs
+
+```{r}
+## Loading Libraries
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(corrplot)
+```
+
+### 3C.Data Cleaning 
+
+```{r}
+## ## Since data after Column 8 is all numeric, Cast these column as Numeric
+for(i in c(8:ncol(HARdatatrain)-1)) {HARdatatrain[,i] = as.numeric(as.character(HARdatatrain[,i]))}
+for(i in c(8:ncol(HARdatatest)-1)) {HARdatatest[,i] = as.numeric(as.character(HARdatatest[,i]))}
+
+## Remove Nas
+AllNAs    <- sapply(HARdatatrain, function(x) mean(is.na(x))) > 0.95
+HARdatatrain <- HARdatatrain[, AllNAs==FALSE]
+HARdatatest  <- HARdatatest [, AllNAs==FALSE]
+
+## Remove Near zero variances
+NZV <- nearZeroVar(HARdatatrain)
+HARdatatrain<- HARdatatrain[, -NZV]
+HARdatatest <- HARdatatest[, -NZV]
+
+# remove identification only variables (columns 1 to 5)
+HARdatatrain <- HARdatatrain[, -(1:5)]
+HARdatatest <- HARdatatest[, -(1:5)]
+
+```
+
+## 4. Parttion the Data set into Training and Testing
+
+```{r}
+## partition the training data 
+HARinTrain <- createDataPartition(y=HARdatatrain$classe,p=0.75, list=FALSE)
+HARtraining <- HARdatatrain[HARinTrain,]
+HARtesting <- HARdatatrain[-HARinTrain,]
+```
+
+## 6. Finding Correlations between different features to select which is most relavent to model further.
+### 6A. Plotting Correlation Plot and correlation thershold (.85) Analysis
+
+```{r}
+corMatrix <- cor(HARtraining[, -54])
+corrplot(corMatrix, order = "hclust", type = "lower", tl.srt = 45, tl.col = rgb(0, 0, 0))
+corrmt1 <- findCorrelation(corMatrix, cutoff = 0.85, names = TRUE)
+length(corrmt1)
+```
+
+By the correlation plot and 85 % cutoff thershold for covariate correlation, We find 9 features which have good degree of correlation. We would now process data so that these 9 features are not used in final modeling and prediction.
+
+Let us do some more exploration by plotting density plot to see if there are overlaps in features.
+## 6B. Density plotting for overlap.
+
+```{r}
+## Extract features which are uncorrelated for feature plotting.
+plotfeatures <- c("roll_belt", "pitch_belt", "yaw_belt", "roll_arm", "pitch_arm", 
+              "yaw_arm", "roll_forearm", "pitch_forearm", "yaw_forearm", "roll_dumbbell", 
+              "pitch_dumbbell", "yaw_dumbbell")
+class_feature <- c("classe")
+plottrainData <- HARtraining[, c(plotfeatures, class_feature)]
+plottestData <- HARtesting[, plotfeatures]
+
+
+## Do basic Exploratory plots
+featurePlot(x = plottrainData[, plotfeatures],
+            y = plottrainData[, class_feature],
+            plot = "density",
+            scales = list(x = list(relation="free"),
+                          y = list(relation="free")),
+            adjust = 1.5,
+            pch = "|",
+            auto.key = list(columns = 3))
+```
+
+## 7. Preprocessing and Standardization using cross validation
+
+```{r}
+## Cross validation
+TrainControl <- trainControl(method = "cv", number = 4) 
+```
+
+## 8. Fitting and predicting Different Model
+### 8A. We will start with a Decision tree Model first.
+```{r}
+## fit a decision tree model first
+modFit1 <- rpart(classe ~ ., data=HARtraining, method="class")
+predict1 <- predict(modFit1, HARtesting, type = "class")
+confusionMatrix(predict1, HARtesting$classe)
+```
+
+We can see that Accuracy of Decision tree Model is 73 percent
+
+### 8B. We will now fit   a Random Forest Model.
+```{r}
+modFit2 <- train(classe ~ ., data=HARtraining, method="rf",trControl=TrainControl)
+modFit2$finalModel
+predictRandForest <- predict(modFit2, newdata=HARtesting)
+confusionMatrix(predictRandForest, HARtesting$classe)
+```
+
+We can see that Accuracy of Decision tree Model is 99 percent
+
+## 9.Comparing both, we choose Random Forest Model to finally predict the test data 
+
+```{r}
+predicTest<- predict(modFit2, HARdatatest)
+predicTest
+```
+
+## 10. Finally We write the result into seperate files.
+```{r}
+## print to respective files
+write_files = function(x){
+       n = length(x)
+      for(i in 1:n){
+             filename = paste0("id_",i,".txt")
+           write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+   }
+write_files(predicTest)
+```
